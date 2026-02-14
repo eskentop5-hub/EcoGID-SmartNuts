@@ -1,0 +1,167 @@
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>VKO GREEN SCANNER - LIVE TIME</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
+    <style>
+        :root { --yellow: #FFE600; --green: #00FF66; --blue: #00E0FF; --black: #000000; --white: #FFFFFF; --red: #FF3E3E; }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Arial Black', sans-serif; }
+        body { background-color: #f0f0f0; background-image: radial-gradient(var(--black) 1px, transparent 1px); background-size: 20px 20px; padding: 15px; }
+        
+        header { 
+            background: var(--white); border: 5px solid var(--black); padding: 15px; margin-bottom: 15px; 
+            box-shadow: 8px 8px 0px var(--black); display: flex; justify-content: space-between; align-items: center; 
+        }
+
+        /* Стильные часы в углу */
+        .clock-vko {
+            background: var(--black); color: var(--yellow); padding: 10px 20px;
+            font-family: 'Courier New', monospace; font-size: 24px; border: 3px solid var(--yellow);
+            box-shadow: 4px 4px 0px var(--red);
+        }
+
+        .layout { display: grid; grid-template-columns: 280px 1fr 420px; gap: 15px; height: calc(100vh - 130px); }
+        .panel { background: var(--white); border: 5px solid var(--black); padding: 12px; box-shadow: 6px 6px 0px var(--black); display: flex; flex-direction: column; overflow: hidden; }
+        
+        #map { height: 380px; border: 4px solid var(--black); margin-bottom: 10px; background: #aad3df; }
+        
+        .ai-log { background: #111; color: var(--green); border: 3px solid var(--black); padding: 12px; flex: 1; font-size: 11px; font-family: 'Courier New', monospace; overflow-y: auto; }
+        
+        .card { background: var(--white); border: 3px solid var(--black); padding: 10px; margin-bottom: 8px; cursor: pointer; transition: 0.1s; }
+        .card:hover { background: var(--green); transform: translateX(5px); }
+        .card.active { background: var(--yellow); border-left: 10px solid var(--black); }
+
+        .stat-bar { height: 8px; border: 2px solid var(--black); background: #333; margin: 4px 0 8px 0; }
+        .stat-fill { height: 100%; transition: width 1s; }
+        
+        .green-dot { background: var(--green); border: 2px solid var(--black); border-radius: 50%; box-shadow: 0 0 10px var(--green); }
+        .weather-box { background: #222; color: var(--blue); padding: 5px 10px; margin: 5px 0; font-size: 10px; border-left: 3px solid var(--blue); }
+    </style>
+</head>
+<body>
+
+<header>
+    <div>
+        <h1 style="font-size: 20px;">VKO_RADAR_LIVE</h1>
+        <span id="sync-status" style="font-size: 10px; color: #666;">ПОГОДА: ОЖИДАНИЕ...</span>
+    </div>
+    <div class="clock-vko" id="realtime-clock">00:00:00</div>
+</header>
+
+<div class="layout">
+    <aside class="panel">
+        <h2 style="font-size: 12px; margin-bottom: 10px; background:var(--black); color:white; padding:4px;">ЛОКАЦИИ</h2>
+        <div style="overflow-y: auto; flex: 1;" id="location-list"></div>
+    </aside>
+
+    <div style="display: flex; flex-direction: column;">
+        <div id="map"></div>
+        <div class="panel" id="nav-panel" style="display:none; flex: 1;">
+            <div id="dist-box" style="background:var(--black); color:var(--yellow); padding:8px; font-size:12px; border:2px solid var(--yellow);"></div>
+        </div>
+    </div>
+
+    <aside class="panel">
+        <h2 style="font-size: 12px; margin-bottom: 10px; background:var(--black); color:white; padding:4px;">СИСТЕМНЫЙ ЛОГ</h2>
+        <div class="ai-log" id="chat">
+            <div>> ТЕРМИНАЛ ГОТОВ...</div>
+        </div>
+    </aside>
+</div>
+
+<script>
+    // 1. ЛОГИКА ЧАСОВ
+    function updateClock() {
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('ru-RU', { hour12: false });
+        document.getElementById('realtime-clock').innerText = timeStr;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // 2. ДАННЫЕ И ПОГОДА
+    const ukPos = [49.95, 82.61];
+    const weatherCodes = { 0: "ЯСНО", 1: "ПРЕИМУЩ. ЯСНО", 2: "ОБЛАЧНО", 3: "ПАСМУРНО", 45: "ТУМАН", 61: "ДОЖДЬ", 71: "СНЕГ", 95: "ГРОЗА" };
+
+    const data = [
+        { name: "ГОРА БЕЛУХА", lat: 49.80, lng: 86.58, ecoLvl: 100, riskLvl: 95, weather: "Sync...", history: "Пик Алтая.", safety: "Опасно." },
+        { name: "МАРКАКОЛЬ", lat: 48.75, lng: 85.75, ecoLvl: 98, riskLvl: 80, weather: "Sync...", history: "Заповедное озеро.", safety: "Медведи." },
+        { name: "КАТОН-КАРАГАЙ", lat: 49.17, lng: 85.61, ecoLvl: 94, riskLvl: 50, weather: "Sync...", history: "Альпы Казахстана.", safety: "Клещи." },
+        { name: "БУХТАРМА", lat: 49.63, lng: 83.52, ecoLvl: 55, riskLvl: 40, weather: "Sync...", history: "Море ВКО.", safety: "Штормы." },
+        { name: "СИБИНЫ", lat: 49.76, lng: 82.63, ecoLvl: 40, riskLvl: 15, weather: "Sync...", history: "5 гранитных озер.", safety: "Скалы." }
+    ];
+
+    async function fetchWeather(lat, lon) {
+        try {
+            const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`);
+            const d = await res.json();
+            const w = d.current_weather;
+            return `${weatherCodes[w.weathercode] || "ОБЛАЧНО"} | ${Math.round(w.temperature)}°C | ${w.windspeed} км/ч`;
+        } catch (e) { return "ОШИБКА СЕТИ"; }
+    }
+
+    async function syncWeather() {
+        const log = document.getElementById('chat');
+        log.innerHTML = `<div>> [${new Date().toLocaleTimeString()}] НАЧАЛО ЧАСОВОЙ СИНХРОНИЗАЦИИ...</div>` + log.innerHTML;
+        
+        for (let loc of data) {
+            loc.weather = await fetchWeather(loc.lat, loc.lng);
+        }
+        
+        document.getElementById('sync-status').innerText = "ПОГОДА ОБНОВЛЕНА: " + new Date().toLocaleTimeString();
+        log.innerHTML = `<div style="color:var(--yellow)">> СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА. СЛЕДУЮЩАЯ ЧЕРЕЗ 60 МИН.</div>` + log.innerHTML;
+    }
+
+    // Запуск синхронизации погоды раз в час
+    syncWeather();
+    setInterval(syncWeather, 3600000); 
+
+    // 3. КАРТА И ИНТЕРФЕЙС
+    const map = L.map('map', {zoomControl: false}).setView([48.5, 84.0], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    
+    function createGreenIcon() { return L.divIcon({ className: 'green-dot', iconSize: [12, 12] }); }
+    let routing = null;
+
+    data.forEach((loc, i) => {
+        const c = document.createElement('div');
+        c.className = 'card';
+        c.innerHTML = `<h3>${loc.name}</h3>`;
+        c.onclick = () => activate(i);
+        document.getElementById('location-list').appendChild(c);
+        L.marker([loc.lat, loc.lng], {icon: createGreenIcon()}).addTo(map);
+    });
+
+    function activate(i) {
+        const l = data[i];
+        map.flyTo([l.lat, l.lng], 8);
+        document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
+        document.querySelectorAll('.card')[i].classList.add('active');
+        document.getElementById('nav-panel').style.display = 'block';
+
+        if (routing) map.removeControl(routing);
+        routing = L.Routing.control({
+            waypoints: [L.latLng(ukPos[0], ukPos[1]), L.latLng(l.lat, l.lng)],
+            lineOptions: { styles: [{ color: 'black', weight: 6 }, { color: 'var(--green)', weight: 3 }] }
+        }).addTo(map);
+
+        const chat = document.getElementById('chat');
+        chat.innerHTML = `
+            <div style="border-bottom: 2px solid #333; padding-bottom:10px; margin-bottom:10px;">
+                <p style="color:var(--green)">> ОБЪЕКТ: ${l.name}</p>
+                <div class="weather-box">REALTIME: ${l.weather}</div>
+                <p>ЭКО [${l.ecoLvl}%] | РИСК [${l.riskLvl}%]</p>
+                <div class="stat-bar"><div class="stat-fill" style="width:${l.ecoLvl}%; background:var(--green)"></div></div>
+                <p><b>ИНФО:</b> ${l.history}</p>
+                <p style="color:var(--red)"><b>⚠️ СТАТУС:</b> ${l.safety}</p>
+            </div>
+        ` + chat.innerHTML;
+    }
+</script>
+</body>
+</html>
